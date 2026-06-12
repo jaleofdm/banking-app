@@ -91,18 +91,14 @@ class LoginForm(forms.Form):
         cleaned = super().clean()
         username = cleaned.get("username")
         password = cleaned.get("password")
-        if not username or not password:
-            return cleaned
-
-        try:
-            user = User.objects.get(username__iexact=username)
-        except User.DoesNotExist as exc:
-            raise ValidationError("Invalid username or password.") from exc
-
-        if not user.check_password(password) or not user.is_active:
-            raise ValidationError("Invalid username or password.")
-
-        self.user = user
+        if username and password:
+            try:
+                user = User.objects.get(username__iexact=username)
+            except User.DoesNotExist as exc:
+                raise ValidationError("Invalid username or password.") from exc
+            if not user.check_password(password) or not user.is_active:
+                raise ValidationError("Invalid username or password.")
+            self.user = user
         return cleaned
 
 

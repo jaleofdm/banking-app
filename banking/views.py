@@ -36,6 +36,11 @@ from .services import (
     withdraw_from_business,
 )
 
+DASHBOARD_URL = "banking:dashboard"
+DASHBOARD_TEMPLATE = "banking/dashboard.html"
+BILLING_URL = "banking:billing"
+BILLING_TEMPLATE = "banking/billing.html"
+
 
 def _business_role(user):
     """Return the business role and account for role-based business users."""
@@ -57,10 +62,25 @@ def _business_context(role, business_account, **overrides):
     return context
 
 
+def _business_dashboard_context(role, business_account, **overrides):
+    """Build the dashboard context for a business user, with form overrides."""
+    context = _business_context(
+        role,
+        business_account,
+        recent_transactions=business_account.transactions.order_by("-timestamp")[:5],
+        deposit_form=DepositForm(),
+        withdraw_form=WithdrawForm(),
+        transfer_form=TransferForm(),
+        bill_pay_form=BusinessBillPaymentForm(),
+    )
+    context.update(overrides)
+    return context
+
+
 @require_http_methods(["GET"])
 def home_view(request):
     """Redirect the root route to the dashboard."""
-    return redirect("banking:dashboard")
+    return redirect(DASHBOARD_URL)
 
 
 @login_required
@@ -79,7 +99,7 @@ def dashboard_view(request):
             "transfer_form": TransferForm(),
             "bill_pay_form": BusinessBillPaymentForm(),
         }
-        return render(request, "banking/dashboard.html", context)
+        return render(request, DASHBOARD_TEMPLATE, context)
     if hasattr(request.user, "authoriser_profile"):
         ba = request.user.authoriser_profile.business_account
         context = {
@@ -92,7 +112,7 @@ def dashboard_view(request):
             "transfer_form": TransferForm(),
             "bill_pay_form": BusinessBillPaymentForm(),
         }
-        return render(request, "banking/dashboard.html", context)
+        return render(request, DASHBOARD_TEMPLATE, context)
     account = request.user.account
     context = {
         "account": account,
@@ -104,7 +124,20 @@ def dashboard_view(request):
         "withdraw_form": WithdrawForm(),
         "transfer_form": TransferForm(),
     }
-    return render(request, "banking/dashboard.html", context)
+    return render(request, DASHBOARD_TEMPLATE, context)
+
+
+def _business_deposit(request, role, ba, form):
+    """Process a deposit for a business account user."""
+    if form.is_valid():
+        try:
+            deposit_to_business(ba, form.cleaned_data["amount"])
+        except InvalidAmountError as exc:
+            form.add_error("amount", str(exc))
+        else:
+            messages.success(request, f"Deposited ${form.cleaned_data['amount']} successfully.")
+            return redirect(DASHBOARD_URL)
+    return render(request, DASHBOARD_TEMPLATE, _business_dashboard_context(role, ba, deposit_form=form), status=200)
 
 
 @login_required
@@ -112,38 +145,9 @@ def dashboard_view(request):
 def deposit_view(request):
     """Handle a deposit POST."""
     form = DepositForm(request.POST)
-    if hasattr(request.user, "manager_profile"):
-        ba = request.user.manager_profile.business_account
-        if form.is_valid():
-            try:
-                deposit_to_business(ba, form.cleaned_data["amount"])
-            except InvalidAmountError as exc:
-                form.add_error("amount", str(exc))
-            else:
-                messages.success(request, f"Deposited ${form.cleaned_data['amount']} successfully.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_manager": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": form, "withdraw_form": WithdrawForm(),
-            "transfer_form": TransferForm(), "bill_pay_form": BusinessBillPaymentForm(),
-        }, status=200)
-    if hasattr(request.user, "authoriser_profile"):
-        ba = request.user.authoriser_profile.business_account
-        if form.is_valid():
-            try:
-                deposit_to_business(ba, form.cleaned_data["amount"])
-            except InvalidAmountError as exc:
-                form.add_error("amount", str(exc))
-            else:
-                messages.success(request, f"Deposited ${form.cleaned_data['amount']} successfully.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_authoriser": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": form, "withdraw_form": WithdrawForm(),
-            "transfer_form": TransferForm(), "bill_pay_form": BusinessBillPaymentForm(),
-        }, status=200)
+    role, ba = _business_role(request.user)
+    if ba is not None:
+        return _business_deposit(request, role, ba, form)
     account = request.user.account
     if form.is_valid():
         amount = form.cleaned_data["amount"]
@@ -153,12 +157,30 @@ def deposit_view(request):
             form.add_error("amount", str(exc))
         else:
             messages.success(request, f"Deposited ${txn.amount} successfully.")
-            return redirect("banking:dashboard")
-    return render(request, "banking/dashboard.html", {
+            return redirect(DASHBOARD_URL)
+    return render(request, DASHBOARD_TEMPLATE, {
         "account": account, "balance": account.balance,
         "recent_transactions": account.transactions.select_related("counterparty__user").order_by("-timestamp")[:5],
         "deposit_form": form, "withdraw_form": WithdrawForm(), "transfer_form": TransferForm(),
     }, status=200)
+
+
+def _business_withdraw(request, role, ba, form):
+    """Process a withdrawal for a business account user."""
+    if form.is_valid():
+        try:
+            if role == "manager":
+                create_pending_withdrawal(ba, form.cleaned_data["amount"])
+                success_message = "Withdrawal submitted and awaiting authoriser approval."
+            else:
+                withdraw_from_business(ba, form.cleaned_data["amount"])
+                success_message = "Withdrawal executed successfully."
+        except (InvalidAmountError, InsufficientFundsError) as exc:
+            form.add_error("amount", str(exc))
+        else:
+            messages.success(request, success_message)
+            return redirect(DASHBOARD_URL)
+    return render(request, DASHBOARD_TEMPLATE, _business_dashboard_context(role, ba, withdraw_form=form), status=200)
 
 
 @login_required
@@ -166,38 +188,9 @@ def deposit_view(request):
 def withdraw_view(request):
     """Handle a withdrawal POST."""
     form = WithdrawForm(request.POST)
-    if hasattr(request.user, "manager_profile"):
-        ba = request.user.manager_profile.business_account
-        if form.is_valid():
-            try:
-                create_pending_withdrawal(ba, form.cleaned_data["amount"])
-            except (InvalidAmountError, InsufficientFundsError) as exc:
-                form.add_error("amount", str(exc))
-            else:
-                messages.success(request, "Withdrawal submitted and awaiting authoriser approval.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_manager": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": DepositForm(), "withdraw_form": form,
-            "transfer_form": TransferForm(), "bill_pay_form": BusinessBillPaymentForm(),
-        }, status=200)
-    if hasattr(request.user, "authoriser_profile"):
-        ba = request.user.authoriser_profile.business_account
-        if form.is_valid():
-            try:
-                withdraw_from_business(ba, form.cleaned_data["amount"])
-            except (InvalidAmountError, InsufficientFundsError) as exc:
-                form.add_error("amount", str(exc))
-            else:
-                messages.success(request, "Withdrawal executed successfully.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_authoriser": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": DepositForm(), "withdraw_form": form,
-            "transfer_form": TransferForm(), "bill_pay_form": BusinessBillPaymentForm(),
-        }, status=200)
+    role, ba = _business_role(request.user)
+    if ba is not None:
+        return _business_withdraw(request, role, ba, form)
     account = request.user.account
     if form.is_valid():
         amount = form.cleaned_data["amount"]
@@ -207,12 +200,34 @@ def withdraw_view(request):
             form.add_error("amount", str(exc))
         else:
             messages.success(request, f"Withdrew ${txn.amount} successfully.")
-            return redirect("banking:dashboard")
-    return render(request, "banking/dashboard.html", {
+            return redirect(DASHBOARD_URL)
+    return render(request, DASHBOARD_TEMPLATE, {
         "account": account, "balance": account.balance,
         "recent_transactions": account.transactions.select_related("counterparty__user").order_by("-timestamp")[:5],
         "deposit_form": DepositForm(), "withdraw_form": form, "transfer_form": TransferForm(),
     }, status=200)
+
+
+def _business_transfer(request, role, ba, form):
+    """Process a transfer for a business account user."""
+    if form.is_valid():
+        try:
+            if role == "manager":
+                create_pending_transfer(ba, form.cleaned_data["amount"], form.cleaned_data["recipient_phone"])
+                success_message = "Transfer submitted and awaiting authoriser approval."
+            else:
+                transfer_from_business(ba, form.cleaned_data["amount"], form.cleaned_data["recipient_phone"])
+                success_message = "Transfer executed successfully."
+        except RecipientNotFoundError as exc:
+            form.add_error(None, str(exc))
+        except InsufficientFundsError as exc:
+            form.add_error("amount", str(exc))
+        except BankingError as exc:
+            form.add_error(None, str(exc))
+        else:
+            messages.success(request, success_message)
+            return redirect(DASHBOARD_URL)
+    return render(request, DASHBOARD_TEMPLATE, _business_dashboard_context(role, ba, transfer_form=form), status=200)
 
 
 @login_required
@@ -220,46 +235,9 @@ def withdraw_view(request):
 def transfer_view(request):
     """Handle an internal transfer POST."""
     form = TransferForm(request.POST)
-    if hasattr(request.user, "manager_profile"):
-        ba = request.user.manager_profile.business_account
-        if form.is_valid():
-            try:
-                create_pending_transfer(ba, form.cleaned_data["amount"], form.cleaned_data["recipient_phone"])
-            except RecipientNotFoundError as exc:
-                form.add_error(None, str(exc))
-            except InsufficientFundsError as exc:
-                form.add_error("amount", str(exc))
-            except BankingError as exc:
-                form.add_error(None, str(exc))
-            else:
-                messages.success(request, "Transfer submitted and awaiting authoriser approval.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_manager": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": DepositForm(), "withdraw_form": WithdrawForm(),
-            "transfer_form": form, "bill_pay_form": BusinessBillPaymentForm(),
-        }, status=200)
-    if hasattr(request.user, "authoriser_profile"):
-        ba = request.user.authoriser_profile.business_account
-        if form.is_valid():
-            try:
-                transfer_from_business(ba, form.cleaned_data["amount"], form.cleaned_data["recipient_phone"])
-            except RecipientNotFoundError as exc:
-                form.add_error(None, str(exc))
-            except InsufficientFundsError as exc:
-                form.add_error("amount", str(exc))
-            except BankingError as exc:
-                form.add_error(None, str(exc))
-            else:
-                messages.success(request, "Transfer executed successfully.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_authoriser": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": DepositForm(), "withdraw_form": WithdrawForm(),
-            "transfer_form": form, "bill_pay_form": BusinessBillPaymentForm(),
-        }, status=200)
+    role, ba = _business_role(request.user)
+    if ba is not None:
+        return _business_transfer(request, role, ba, form)
     account = request.user.account
     if form.is_valid():
         amount = form.cleaned_data["amount"]
@@ -271,8 +249,8 @@ def transfer_view(request):
         else:
             recipient = out_transaction.counterparty.user
             messages.success(request, f"Sent ${out_transaction.amount} to {recipient.name}.")
-            return redirect("banking:dashboard")
-    return render(request, "banking/dashboard.html", {
+            return redirect(DASHBOARD_URL)
+    return render(request, DASHBOARD_TEMPLATE, {
         "account": account, "balance": account.balance,
         "recent_transactions": account.transactions.select_related("counterparty__user").order_by("-timestamp")[:5],
         "deposit_form": DepositForm(), "withdraw_form": WithdrawForm(), "transfer_form": form,
@@ -331,7 +309,7 @@ def billing_view(request):
         ).order_by("-timestamp")[:5]
         return render(
             request,
-            "banking/billing.html",
+            BILLING_TEMPLATE,
             _business_context(
                 role,
                 business_account,
@@ -341,57 +319,44 @@ def billing_view(request):
         )
 
     account = request.user.account
-    return render(request, "banking/billing.html", _billing_context(account))
+    return render(request, BILLING_TEMPLATE, _billing_context(account))
 
 
-@login_required
-@require_http_methods(["POST"])
-def pay_bill_view(request):
-    """Handle a bill payment POST."""
-    if hasattr(request.user, "manager_profile"):
-        ba = request.user.manager_profile.business_account
-        form = BusinessBillPaymentForm(request.POST)
-        if form.is_valid():
-            try:
+def _business_pay_bill(request, role, ba, form):
+    """Process a bill payment for a business account user."""
+    if form.is_valid():
+        try:
+            if role == "manager":
                 create_pending_bill_payment(
                     ba,
                     form.cleaned_data["amount"],
                     form.cleaned_data["category"],
                     form.cleaned_data["reference"],
                 )
-            except (InvalidAmountError, InsufficientFundsError) as exc:
-                form.add_error("amount", str(exc))
+                success_message = "Bill payment submitted and awaiting authoriser approval."
             else:
-                messages.success(request, "Bill payment submitted and awaiting authoriser approval.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_manager": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": DepositForm(), "withdraw_form": WithdrawForm(),
-            "transfer_form": TransferForm(), "bill_pay_form": form,
-        }, status=200)
-    if hasattr(request.user, "authoriser_profile"):
-        ba = request.user.authoriser_profile.business_account
-        form = BusinessBillPaymentForm(request.POST)
-        if form.is_valid():
-            try:
                 pay_bill_from_business(
                     ba,
                     form.cleaned_data["amount"],
                     form.cleaned_data["category"],
                     form.cleaned_data["reference"],
                 )
-            except (InvalidAmountError, InsufficientFundsError) as exc:
-                form.add_error("amount", str(exc))
-            else:
-                messages.success(request, "Bill payment executed successfully.")
-                return redirect("banking:dashboard")
-        return render(request, "banking/dashboard.html", {
-            "is_authoriser": True, "business_account": ba, "balance": ba.balance,
-            "recent_transactions": ba.transactions.order_by("-timestamp")[:5],
-            "deposit_form": DepositForm(), "withdraw_form": WithdrawForm(),
-            "transfer_form": TransferForm(), "bill_pay_form": form,
-        }, status=200)
+                success_message = "Bill payment executed successfully."
+        except (InvalidAmountError, InsufficientFundsError) as exc:
+            form.add_error("amount", str(exc))
+        else:
+            messages.success(request, success_message)
+            return redirect(DASHBOARD_URL)
+    return render(request, DASHBOARD_TEMPLATE, _business_dashboard_context(role, ba, bill_pay_form=form), status=200)
+
+
+@login_required
+@require_http_methods(["POST"])
+def pay_bill_view(request):
+    """Handle a bill payment POST."""
+    role, ba = _business_role(request.user)
+    if ba is not None:
+        return _business_pay_bill(request, role, ba, BusinessBillPaymentForm(request.POST))
     account = request.user.account
     form = BillPaymentForm(request.POST, account=account)
     if form.is_valid():
@@ -405,8 +370,8 @@ def pay_bill_view(request):
             form.add_error("amount", str(exc))
         else:
             messages.success(request, f"Paid ${txn.amount} to {txn.description}.")
-            return redirect("banking:billing")
-    return render(request, "banking/billing.html", _billing_context(account, pay_form=form), status=200)
+            return redirect(BILLING_URL)
+    return render(request, BILLING_TEMPLATE, _billing_context(account, pay_form=form), status=200)
 
 
 @login_required
@@ -425,11 +390,11 @@ def add_biller_view(request):
             reference=form.cleaned_data["reference"],
         )
         messages.success(request, f"Biller '{form.cleaned_data['name']}' added.")
-        return redirect("banking:billing")
+        return redirect(BILLING_URL)
 
     return render(
         request,
-        "banking/billing.html",
+        BILLING_TEMPLATE,
         _billing_context(account, add_biller_form=form),
         status=200,
     )
@@ -447,7 +412,7 @@ def remove_biller_view(request, biller_id):
     name = biller.name
     biller.delete()
     messages.success(request, f"Biller '{name}' removed.")
-    return redirect("banking:billing")
+    return redirect(BILLING_URL)
 
 
 @login_required

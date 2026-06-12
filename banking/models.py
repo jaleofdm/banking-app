@@ -6,6 +6,9 @@ from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+TRANSFER_OUT_LABEL = "Transfer Out"
+BILL_PAYMENT_LABEL = "Bill Payment"
+
 
 class Account(models.Model):
     """One monetary account per user (personal only)."""
@@ -77,9 +80,9 @@ class Transaction(models.Model):
     TRANSACTION_TYPES = [
         (DEPOSIT, "Deposit"),
         (WITHDRAWAL, "Withdrawal"),
-        (TRANSFER_OUT, "Transfer Out"),
+        (TRANSFER_OUT, TRANSFER_OUT_LABEL),
         (TRANSFER_IN, "Transfer In"),
-        (BILL_PAYMENT, "Bill Payment"),
+        (BILL_PAYMENT, BILL_PAYMENT_LABEL),
         (REJECTED, "Rejected"),
         (CANCELLED, "Cancelled"),
     ]
@@ -121,8 +124,8 @@ class BusinessTransaction(models.Model):
     TRANSACTION_TYPES = [
         (DEPOSIT, "Deposit"),
         (WITHDRAWAL, "Withdrawal"),
-        (TRANSFER_OUT, "Transfer Out"),
-        (BILL_PAYMENT, "Bill Payment"),
+        (TRANSFER_OUT, TRANSFER_OUT_LABEL),
+        (BILL_PAYMENT, BILL_PAYMENT_LABEL),
         (REJECTED, "Rejected"),
     ]
 
@@ -224,8 +227,8 @@ class PendingTransaction(models.Model):
 
     TRANSACTION_TYPE_CHOICES = [
         (WITHDRAWAL, "Withdrawal"),
-        (TRANSFER_OUT, "Transfer Out"),
-        (BILL_PAYMENT, "Bill Payment"),
+        (TRANSFER_OUT, TRANSFER_OUT_LABEL),
+        (BILL_PAYMENT, BILL_PAYMENT_LABEL),
     ]
 
     business_account = models.ForeignKey(

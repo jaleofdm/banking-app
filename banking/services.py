@@ -19,6 +19,9 @@ from .models import (
     Transaction,
 )
 
+INSUFFICIENT_FUNDS_MESSAGE = "Insufficient funds"
+BELOW_MINIMUM_BALANCE_MESSAGE = "Transaction would bring balance below minimum (7,000)."
+
 
 class BankingError(Exception):
     """Base exception for banking domain errors."""
@@ -137,7 +140,7 @@ def withdraw(account: Account, amount: Decimal) -> Transaction:
     _validate_amount(amount)
     account = Account.objects.get(pk=account.pk)
     if account.balance < amount:
-        raise InsufficientFundsError("Insufficient funds")
+        raise InsufficientFundsError(INSUFFICIENT_FUNDS_MESSAGE)
 
     account.balance -= amount
     account.save(update_fields=["balance"])
@@ -154,7 +157,7 @@ def pay_bill(account: Account, biller: Biller, amount: Decimal) -> Transaction:
     _validate_amount(amount)
     account = Account.objects.get(pk=account.pk)
     if account.balance < amount:
-        raise InsufficientFundsError("Insufficient funds")
+        raise InsufficientFundsError(INSUFFICIENT_FUNDS_MESSAGE)
 
     account.balance -= amount
     account.save(update_fields=["balance"])
@@ -195,7 +198,7 @@ def transfer(
         raise SelfTransferError("Cannot transfer to your own account")
 
     if sender_account.balance < amount:
-        raise InsufficientFundsError("Insufficient funds")
+        raise InsufficientFundsError(INSUFFICIENT_FUNDS_MESSAGE)
 
     sender_account.balance -= amount
     sender_account.save(update_fields=["balance"])
@@ -219,8 +222,8 @@ def transfer(
 
 def _next_odd_phone():
     """Return the next available odd phone number ≥ 80000001 for managers."""
-    User = get_user_model()
-    existing = set(User.objects.values_list("phone_number", flat=True))
+    user_model = get_user_model()
+    existing = set(user_model.objects.values_list("phone_number", flat=True))
     candidate = 80000001
     while str(candidate) in existing:
         candidate += 2
@@ -229,8 +232,8 @@ def _next_odd_phone():
 
 def _next_even_phone():
     """Return the next available even phone number ≥ 80000002 for authorisers."""
-    User = get_user_model()
-    existing = set(User.objects.values_list("phone_number", flat=True))
+    user_model = get_user_model()
+    existing = set(user_model.objects.values_list("phone_number", flat=True))
     candidate = 80000002
     while str(candidate) in existing:
         candidate += 2
@@ -243,12 +246,12 @@ def _make_slug(company_name: str) -> str:
 
 
 def _unique_username(prefix: str) -> str:
-    User = get_user_model()
+    user_model = get_user_model()
     base = f"{prefix}"
-    if not User.objects.filter(username=base).exists():
+    if not user_model.objects.filter(username=base).exists():
         return base
     i = 2
-    while User.objects.filter(username=f"{base}{i}").exists():
+    while user_model.objects.filter(username=f"{base}{i}").exists():
         i += 1
     return f"{base}{i}"
 
@@ -273,7 +276,7 @@ def create_business_account_mock(
     """
     if initial_deposit < Decimal("7000.00"):
         raise BankingError("Initial deposit must be at least 7,000.")
-    User = get_user_model()
+    user_model = get_user_model()
     slug = _make_slug(company_name)
 
     business_account = BusinessAccount.objects.create(
@@ -294,7 +297,7 @@ def create_business_account_mock(
     manager_phone = _next_odd_phone()
     manager_username = _unique_username(f"manager.{slug}")
     manager_password = _random_password()
-    manager_user = User.objects.create_user(
+    manager_user = user_model.objects.create_user(
         username=manager_username,
         email=f"{manager_username}@demo.internal",
         name=f"Manager ({company_name})",
@@ -306,7 +309,7 @@ def create_business_account_mock(
     authoriser_phone = _next_even_phone()
     authoriser_username = _unique_username(f"authoriser.{slug}")
     authoriser_password = _random_password()
-    authoriser_user = User.objects.create_user(
+    authoriser_user = user_model.objects.create_user(
         username=authoriser_username,
         email=f"{authoriser_username}@demo.internal",
         name=f"Authoriser ({company_name})",
@@ -345,7 +348,7 @@ def create_pending_withdrawal(business_account: BusinessAccount, amount: Decimal
     _validate_amount(amount)
     ba = BusinessAccount.objects.get(pk=business_account.pk)
     if ba.balance - amount < Decimal("7000.00"):
-        raise InsufficientFundsError("Transaction would bring balance below minimum (7,000).")
+        raise InsufficientFundsError(BELOW_MINIMUM_BALANCE_MESSAGE)
     return PendingTransaction.objects.create(
         business_account=ba,
         transaction_type=PendingTransaction.WITHDRAWAL,
@@ -359,7 +362,7 @@ def create_pending_transfer(business_account: BusinessAccount, amount: Decimal, 
     recipient_phone = _normalize_phone(recipient_phone)
     ba = BusinessAccount.objects.get(pk=business_account.pk)
     if ba.balance - amount < Decimal("7000.00"):
-        raise InsufficientFundsError("Transaction would bring balance below minimum (7,000).")
+        raise InsufficientFundsError(BELOW_MINIMUM_BALANCE_MESSAGE)
     try:
         recipient_account = Account.objects.select_related("user").get(
             user__phone_number=recipient_phone
@@ -380,7 +383,7 @@ def create_pending_bill_payment(business_account: BusinessAccount, amount: Decim
     _validate_amount(amount)
     ba = BusinessAccount.objects.get(pk=business_account.pk)
     if ba.balance - amount < Decimal("7000.00"):
-        raise InsufficientFundsError("Transaction would bring balance below minimum (7,000).")
+        raise InsufficientFundsError(BELOW_MINIMUM_BALANCE_MESSAGE)
     return PendingTransaction.objects.create(
         business_account=ba,
         transaction_type=PendingTransaction.BILL_PAYMENT,
@@ -394,7 +397,7 @@ def withdraw_from_business(business_account: BusinessAccount, amount: Decimal) -
     _validate_amount(amount)
     ba = BusinessAccount.objects.select_for_update().get(pk=business_account.pk)
     if ba.balance - amount < Decimal("7000.00"):
-        raise InsufficientFundsError("Transaction would bring balance below minimum (7,000).")
+        raise InsufficientFundsError(BELOW_MINIMUM_BALANCE_MESSAGE)
     ba.balance -= amount
     ba.save(update_fields=["balance"])
     return BusinessTransaction.objects.create(
@@ -411,7 +414,7 @@ def transfer_from_business(business_account: BusinessAccount, amount: Decimal, r
     recipient_phone = _normalize_phone(recipient_phone)
     ba = BusinessAccount.objects.select_for_update().get(pk=business_account.pk)
     if ba.balance - amount < Decimal("7000.00"):
-        raise InsufficientFundsError("Transaction would bring balance below minimum (7,000).")
+        raise InsufficientFundsError(BELOW_MINIMUM_BALANCE_MESSAGE)
     try:
         recipient_account = Account.objects.select_related("user").get(
             user__phone_number=recipient_phone
@@ -440,7 +443,7 @@ def pay_bill_from_business(business_account: BusinessAccount, amount: Decimal, c
     _validate_amount(amount)
     ba = BusinessAccount.objects.select_for_update().get(pk=business_account.pk)
     if ba.balance - amount < Decimal("7000.00"):
-        raise InsufficientFundsError("Transaction would bring balance below minimum (7,000).")
+        raise InsufficientFundsError(BELOW_MINIMUM_BALANCE_MESSAGE)
     ba.balance -= amount
     ba.save(update_fields=["balance"])
     return BusinessTransaction.objects.create(

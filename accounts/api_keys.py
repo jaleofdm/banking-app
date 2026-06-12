@@ -7,6 +7,8 @@ from django.utils import timezone
 
 from .models import APIKeyAuditEvent, AccountAPIKey
 
+AUTHENTICATION_FAILED_MESSAGE = "Authentication failed."
+
 
 class APIKeyAuthenticationError(Exception):
     """Submitted API key cannot authenticate a user."""
@@ -65,27 +67,27 @@ def verify_key(raw_secret):
     submitted = (raw_secret or "").strip()
     if "." not in submitted:
         _audit_failure(reason="malformed")
-        raise APIKeyAuthenticationError("Authentication failed.")
+        raise APIKeyAuthenticationError(AUTHENTICATION_FAILED_MESSAGE)
 
     identifier, _secret = submitted.split(".", 1)
     if not identifier.startswith("ak_"):
         _audit_failure(reason="malformed")
-        raise APIKeyAuthenticationError("Authentication failed.")
+        raise APIKeyAuthenticationError(AUTHENTICATION_FAILED_MESSAGE)
 
     api_key = AccountAPIKey.objects.select_related("user").filter(
         identifier=identifier
     ).first()
     if api_key is None:
         _audit_failure(reason="invalid")
-        raise APIKeyAuthenticationError("Authentication failed.")
+        raise APIKeyAuthenticationError(AUTHENTICATION_FAILED_MESSAGE)
 
     if not api_key.is_active:
         _audit_failure(api_key=api_key, user=api_key.user, reason="revoked")
-        raise APIKeyAuthenticationError("Authentication failed.")
+        raise APIKeyAuthenticationError(AUTHENTICATION_FAILED_MESSAGE)
 
     if not check_key_secret(submitted, api_key):
         _audit_failure(api_key=api_key, user=api_key.user, reason="invalid")
-        raise APIKeyAuthenticationError("Authentication failed.")
+        raise APIKeyAuthenticationError(AUTHENTICATION_FAILED_MESSAGE)
 
     api_key.last_used_at = timezone.now()
     api_key.save(update_fields=["last_used_at"])

@@ -1,5 +1,5 @@
 (function () {
-  var CRITERIA = [
+  const CRITERIA = [
     {
       id: "pc-length",
       label: "At least 8 characters",
@@ -38,10 +38,10 @@
   ];
 
   function buildChecklist() {
-    var ul = document.createElement("ul");
+    const ul = document.createElement("ul");
     ul.className = "password-criteria";
     CRITERIA.forEach(function (c) {
-      var li = document.createElement("li");
+      const li = document.createElement("li");
       li.id = c.id;
       li.textContent = c.label;
       ul.appendChild(li);
@@ -51,18 +51,18 @@
 
   function update(password) {
     CRITERIA.forEach(function (c) {
-      var li = document.getElementById(c.id);
+      const li = document.getElementById(c.id);
       if (li) li.classList.toggle("met", c.test(password));
     });
   }
 
   document.addEventListener("DOMContentLoaded", function () {
     // Matches id_password1 (registration) and id_new_password1 (password reset)
-    var fields = document.querySelectorAll(
+    const fields = document.querySelectorAll(
       "input[type='password'][id$='password1']",
     );
     fields.forEach(function (field) {
-      var checklist = buildChecklist();
+      const checklist = buildChecklist();
       field.parentNode.insertBefore(checklist, field.nextSibling);
       field.addEventListener("input", function () {
         update(field.value);

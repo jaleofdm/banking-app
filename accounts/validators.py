@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 class PasswordComplexityValidator:
     """Requires uppercase, lowercase, digit, and special character."""
 
-    def validate(self, password, user=None):
+    def validate(self, password, _user=None):
         errors = []
         if not re.search(r"[A-Z]", password):
             errors.append("at least one uppercase letter (A–Z)")

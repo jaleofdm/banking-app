@@ -6,6 +6,8 @@ from django.core.validators import RegexValidator
 
 from .models import Biller
 
+FIELD_REQUIRED_MESSAGE = "This field is required."
+
 
 class AmountForm(forms.Form):
     """Shared positive amount form."""
@@ -97,13 +99,13 @@ class BusinessCreateForm(forms.Form):
     def clean_company_name(self):
         value = self.cleaned_data["company_name"].strip()
         if not value:
-            raise forms.ValidationError("This field is required.")
+            raise forms.ValidationError(FIELD_REQUIRED_MESSAGE)
         return value
 
     def clean_uen(self):
         value = self.cleaned_data["uen"].strip()
         if not value:
-            raise forms.ValidationError("This field is required.")
+            raise forms.ValidationError(FIELD_REQUIRED_MESSAGE)
         from .models import BusinessAccount
         if BusinessAccount.objects.filter(uen=value).exists():
             raise forms.ValidationError("A business account with this UEN already exists.")
@@ -112,19 +114,19 @@ class BusinessCreateForm(forms.Form):
     def clean_street(self):
         value = self.cleaned_data["street"].strip()
         if not value:
-            raise forms.ValidationError("This field is required.")
+            raise forms.ValidationError(FIELD_REQUIRED_MESSAGE)
         return value
 
     def clean_city(self):
         value = self.cleaned_data["city"].strip()
         if not value:
-            raise forms.ValidationError("This field is required.")
+            raise forms.ValidationError(FIELD_REQUIRED_MESSAGE)
         return value
 
     def clean_postal_code(self):
         value = self.cleaned_data["postal_code"].strip()
         if not value:
-            raise forms.ValidationError("This field is required.")
+            raise forms.ValidationError(FIELD_REQUIRED_MESSAGE)
         return value
 
 
